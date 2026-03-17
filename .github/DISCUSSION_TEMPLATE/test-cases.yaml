@@ -47,13 +47,3 @@ body:
       description: "정상적인 커널에서 실행했을 때의 결과와 실패 시나리오를 묘사해주세요."
     validations:
       required: true
-
-  - type: textarea
-    id: hidden-field
-    attributes:
-      label: "담당자"
-      value: "@ESeokhwan @wnsah814"
-      description: "알림을 보낼 사용자 목록입니다. 그대로 제출하세요."
-    validations:
-      required: false
-

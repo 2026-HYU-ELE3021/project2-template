@@ -10,12 +10,3 @@ body:
       placeholder: "예) N/T."
     validations:
       required: true
-
-  - type: textarea
-    id: hidden-field
-    attributes:
-      label: "담당자"
-      value: "@ESeokhwan @wnsah814"
-      description: "알림을 보낼 사용자 목록입니다. 그대로 제출하세요."
-    validations:
-      required: false
