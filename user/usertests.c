@@ -2755,7 +2755,10 @@ lazy_sbrk(char *s)
     p = sbrklazy(0);
   }
 
-  int n = TRAPFRAME-PGSIZE-(uint64)p;
+  // The user memory cap is now USERTOP (= TRAPFRAME - NTHREAD*PGSIZE),
+  // since the pages between USERTOP and TRAPFRAME are reserved for
+  // per-thread trapframe slots.
+  int n = USERTOP-PGSIZE-(uint64)p;
 
   char *p1 = sbrklazy(n);
   if (p1 < 0 || p1 != p) {
@@ -2764,8 +2767,8 @@ lazy_sbrk(char *s)
   }
 
   p = sbrk(PGSIZE);
-  if (p < 0 || (uint64)p != TRAPFRAME-PGSIZE) {
-    printf("sbrk(%d) returned %p, not expected TRAPFRAME-PGSIZE\n", PGSIZE, p);
+  if (p < 0 || (uint64)p != USERTOP-PGSIZE) {
+    printf("sbrk(%d) returned %p, not expected USERTOP-PGSIZE\n", PGSIZE, p);
     exit(1);
   }
 

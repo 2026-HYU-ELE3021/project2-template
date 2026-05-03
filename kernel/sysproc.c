@@ -42,24 +42,35 @@ sys_sbrk(void)
   uint64 addr;
   int t;
   int n;
+  struct proc *p = myproc();
+  struct mm_struct *mm = p->mm;
 
   argint(0, &n);
   argint(1, &t);
-  addr = myproc()->sz;
 
   if(t == SBRK_EAGER || n < 0) {
+    acquire(&mm->lock);
+    addr = mm->sz;
+    release(&mm->lock);
     if(growproc(n) < 0) {
       return -1;
     }
   } else {
     // Lazily allocate memory for this process: increase its memory
-    // size but don't allocate memory. If the processes uses the
+    // size but don't allocate memory. If the process uses the
     // memory, vmfault() will allocate it.
-    if(addr + n < addr)
+    acquire(&mm->lock);
+    addr = mm->sz;
+    if(addr + n < addr) {
+      release(&mm->lock);
       return -1;
-    if(addr + n > TRAPFRAME)
+    }
+    if(addr + n > USERTOP) {
+      release(&mm->lock);
       return -1;
-    myproc()->sz += n;
+    }
+    mm->sz += n;
+    release(&mm->lock);
   }
   return addr;
 }

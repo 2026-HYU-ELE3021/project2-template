@@ -102,6 +102,38 @@ allocpid()
   return pid;
 }
 
+struct mm_struct *
+mm_alloc(void)
+{
+  struct mm_struct *mm = (struct mm_struct *)kalloc();
+  if (mm == 0)
+    return 0;
+  mm->pagetable = 0;
+  mm->sz = 0;
+  mm->refcount = 1;
+  initlock(&mm->lock, "mm");
+  return mm;
+}
+
+void
+mm_get(struct mm_struct *mm)
+{
+  (void)mm;
+}
+
+void
+mm_put(struct mm_struct *mm)
+{
+  (void)mm;
+}
+
+uint64
+find_free_tf_va(pagetable_t pagetable)
+{
+  (void)pagetable;
+  return 0;
+}
+
 // Look in the process table for an UNUSED proc.
 // If found, initialize state required to run in the kernel,
 // and return with p->lock held.
@@ -125,16 +157,15 @@ found:
   p->pid = allocpid();
   p->state = USED;
 
-  // Allocate a trapframe page.
-  if((p->trapframe = (struct trapframe *)kalloc()) == 0){
-    freeproc(p);
-    release(&p->lock);
-    return 0;
-  }
+  // Default thread fields: a single-task process is its own group leader.
+  p->mm = 0;
+  p->group_leader = p;
+  p->tgid = p->pid;
+  p->tf_va = 0;
+  p->ustack = 0;
 
-  // An empty user page table.
-  p->pagetable = proc_pagetable(p);
-  if(p->pagetable == 0){
+  // Allocate a trapframe page (per-task; never shared).
+  if((p->trapframe = (struct trapframe *)kalloc()) == 0){
     freeproc(p);
     release(&p->lock);
     return 0;
@@ -149,19 +180,22 @@ found:
   return p;
 }
 
-// free a proc structure and the data hanging from it,
-// including user pages.
+// free a proc structure and its per-task resources.
 // p->lock must be held.
 static void
 freeproc(struct proc *p)
 {
-  if(p->trapframe)
-    kfree((void*)p->trapframe);
-  p->trapframe = 0;
-  if(p->pagetable)
-    proc_freepagetable(p->pagetable, p->sz);
-  p->pagetable = 0;
-  p->sz = 0;
+  if (p->trapframe) {
+    kfree((void *)p->trapframe);
+    p->trapframe = 0;
+  }
+  p->tf_va = 0;
+
+  if (p->mm) {
+    mm_put(p->mm);
+    p->mm = 0;
+  }
+
   p->pid = 0;
   p->parent = 0;
   p->name[0] = 0;
@@ -169,16 +203,19 @@ freeproc(struct proc *p)
   p->killed = 0;
   p->xstate = 0;
   p->state = UNUSED;
+  p->group_leader = 0;
+  p->tgid = 0;
+  p->ustack = 0;
 }
 
 // Create a user page table for a given process, with no user memory,
-// but with trampoline and trapframe pages.
+// but with trampoline and trapframe pages.  Sets p->tf_va = TRAPFRAME
+// (slot 0 — used by group leaders / single-threaded processes).
 pagetable_t
 proc_pagetable(struct proc *p)
 {
   pagetable_t pagetable;
 
-  // An empty page table.
   pagetable = uvmcreate();
   if(pagetable == 0)
     return 0;
@@ -202,6 +239,7 @@ proc_pagetable(struct proc *p)
     return 0;
   }
 
+  p->tf_va = TRAPFRAME;
   return pagetable;
 }
 
@@ -224,6 +262,12 @@ userinit(void)
   p = allocproc();
   initproc = p;
 
+  if ((p->mm = mm_alloc()) == 0)
+    panic("userinit: mm_alloc");
+  if ((p->mm->pagetable = proc_pagetable(p)) == 0)
+    panic("userinit: proc_pagetable");
+  p->mm->sz = 0;
+
   p->cwd = namei("/");
 
   p->state = RUNNABLE;
@@ -232,25 +276,30 @@ userinit(void)
 }
 
 // Grow or shrink user memory by n bytes.
-// Return 0 on success, -1 on failure.
+// Returns 0 on success, -1 on failure.
 int
 growproc(int n)
 {
-  uint64 sz;
   struct proc *p = myproc();
+  struct mm_struct *mm = p->mm;
+  uint64 sz;
 
-  sz = p->sz;
-  if(n > 0){
-    if(sz + n > TRAPFRAME) {
+  acquire(&mm->lock);
+  sz = mm->sz;
+  if (n > 0) {
+    if (sz + n > USERTOP) {
+      release(&mm->lock);
       return -1;
     }
-    if((sz = uvmalloc(p->pagetable, sz, sz + n, PTE_W)) == 0) {
+    if ((sz = uvmalloc(mm->pagetable, sz, sz + n, PTE_W)) == 0) {
+      release(&mm->lock);
       return -1;
     }
-  } else if(n < 0){
-    sz = uvmdealloc(p->pagetable, sz, sz + n);
+  } else if (n < 0) {
+    sz = uvmdealloc(mm->pagetable, sz, sz + n);
   }
-  p->sz = sz;
+  mm->sz = sz;
+  release(&mm->lock);
   return 0;
 }
 
@@ -264,27 +313,29 @@ kfork(void)
   struct proc *p = myproc();
 
   // Allocate process.
-  if((np = allocproc()) == 0){
+  if ((np = allocproc()) == 0) {
     return -1;
   }
 
-  // Copy user memory from parent to child.
-  if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
-    freeproc(np);
-    release(&np->lock);
-    return -1;
-  }
-  np->sz = p->sz;
+  // Build a fresh address space for the child and copy parent memory.
+  if ((np->mm = mm_alloc()) == 0)
+    goto fail;
+  if ((np->mm->pagetable = proc_pagetable(np)) == 0)
+    goto fail;
+  if (uvmcopy(p->mm->pagetable, np->mm->pagetable, p->mm->sz) < 0)
+    goto fail;
+  np->mm->sz = p->mm->sz;
+  np->group_leader = np;
+  np->tgid         = np->pid;
 
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
-
   // Cause fork to return 0 in the child.
   np->trapframe->a0 = 0;
 
   // increment reference counts on open file descriptors.
-  for(i = 0; i < NOFILE; i++)
-    if(p->ofile[i])
+  for (i = 0; i < NOFILE; i++)
+    if (p->ofile[i])
       np->ofile[i] = filedup(p->ofile[i]);
   np->cwd = idup(p->cwd);
 
@@ -303,6 +354,11 @@ kfork(void)
   release(&np->lock);
 
   return pid;
+
+fail:
+  freeproc(np);
+  release(&np->lock);
+  return -1;
 }
 
 // Pass p's abandoned children to init.
@@ -320,9 +376,9 @@ reparent(struct proc *p)
   }
 }
 
-// Exit the current process.  Does not return.
-// An exited process remains in the zombie state
-// until its parent calls wait().
+// Exit the current task.  Does not return.
+// An exited task remains in the zombie state until its parent calls
+// wait() (for processes) or join() (for threads).
 void
 kexit(int status)
 {
@@ -350,8 +406,11 @@ kexit(int status)
   // Give any children to init.
   reparent(p);
 
-  // Parent might be sleeping in wait().
+  // Parent might be sleeping in wait().  
+  // And the group leader might be sleeping in join().
   wakeup(p->parent);
+  if (p->group_leader != p)
+    wakeup(p->group_leader);
 
   acquire(&p->lock);
 
@@ -366,7 +425,7 @@ kexit(int status)
 }
 
 // Wait for a child process to exit and return its pid.
-// Return -1 if this process has no children.
+// Returns -1 if this proc has no children.
 int
 kwait(uint64 addr)
 {
@@ -380,27 +439,29 @@ kwait(uint64 addr)
     // Scan through table looking for exited children.
     havekids = 0;
     for(pp = proc; pp < &proc[NPROC]; pp++){
-      if(pp->parent == p){
-        // make sure the child isn't still in exit() or swtch().
-        acquire(&pp->lock);
+      if (pp->parent != p)
+        continue;
 
-        havekids = 1;
-        if(pp->state == ZOMBIE){
-          // Found one.
-          pid = pp->pid;
-          if(addr != 0 && copyout(p->pagetable, addr, (char *)&pp->xstate,
-                                  sizeof(pp->xstate)) < 0) {
-            release(&pp->lock);
-            release(&wait_lock);
-            return -1;
-          }
-          freeproc(pp);
+      // make sure the child isn't still in exit() or swtch().
+      acquire(&pp->lock);
+
+      havekids = 1;
+      if(pp->state == ZOMBIE){
+        // Found one.
+        pid = pp->pid;
+        if(addr != 0 && copyout(p->mm->pagetable, addr,
+                                (char *)&pp->xstate,
+                                sizeof(pp->xstate)) < 0) {
           release(&pp->lock);
           release(&wait_lock);
-          return pid;
+          return -1;
         }
+        freeproc(pp);
         release(&pp->lock);
+        release(&wait_lock);
+        return pid;
       }
+      release(&pp->lock);
     }
 
     // No point waiting if we don't have any children.
@@ -532,7 +593,7 @@ forkret(void)
 
   // return to user space, mimicing usertrap()'s return.
   prepare_return();
-  uint64 satp = MAKE_SATP(p->pagetable);
+  uint64 satp = MAKE_SATP(p->mm->pagetable);
   uint64 trampoline_userret = TRAMPOLINE + (userret - trampoline);
   ((void (*)(uint64))trampoline_userret)(satp);
 }
@@ -586,9 +647,9 @@ wakeup(void *chan)
   }
 }
 
-// Kill the process with the given pid.
-// The victim won't exit until it tries to return
-// to user space (see usertrap() in trap.c).
+// Kill the process containing pid.
+// In the original xv6 this is one task;
+// with thread groups it should be the whole group.
 int
 kkill(int pid)
 {
@@ -637,7 +698,7 @@ either_copyout(int user_dst, uint64 dst, void *src, uint64 len)
 {
   struct proc *p = myproc();
   if(user_dst){
-    return copyout(p->pagetable, dst, src, len);
+    return copyout(p->mm->pagetable, dst, src, len);
   } else {
     memmove((char *)dst, src, len);
     return 0;
@@ -652,7 +713,7 @@ either_copyin(void *dst, int user_src, uint64 src, uint64 len)
 {
   struct proc *p = myproc();
   if(user_src){
-    return copyin(p->pagetable, dst, src, len);
+    return copyin(p->mm->pagetable, dst, src, len);
   } else {
     memmove(dst, (char*)src, len);
     return 0;
@@ -684,7 +745,8 @@ procdump(void)
       state = states[p->state];
     else
       state = "???";
-    printf("%d %s %s", p->pid, state, p->name);
+    printf("%d (tgid=%d tf_va=%lx) %s %s",
+           p->pid, p->tgid, p->tf_va, state, p->name);
     printf("\n");
   }
 }

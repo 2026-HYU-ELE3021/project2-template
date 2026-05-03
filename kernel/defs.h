@@ -2,6 +2,7 @@ struct buf;
 struct context;
 struct file;
 struct inode;
+struct mm_struct;
 struct pipe;
 struct proc;
 struct spinlock;
@@ -101,6 +102,12 @@ void            yield(void);
 int             either_copyout(int user_dst, uint64 dst, void *src, uint64 len);
 int             either_copyin(void *dst, int user_src, uint64 src, uint64 len);
 void            procdump(void);
+
+// proc.c — mm_struct API
+struct mm_struct *mm_alloc(void);
+void              mm_get(struct mm_struct *);
+void              mm_put(struct mm_struct *);
+uint64            find_free_tf_va(pagetable_t);
 
 // swtch.S
 void            swtch(struct context*, struct context*);

@@ -1,3 +1,5 @@
+#include "param.h"
+
 // Physical memory layout
 
 // qemu -machine virt is set up like this,
@@ -54,6 +56,12 @@
 //   fixed-size stack
 //   expandable heap
 //   ...
-//   TRAPFRAME (p->trapframe, used by the trampoline)
+//   USERTOP                                <- top of user memory (sz cap)
+//   ... (NTHREAD trapframe slots) ...
+//   TRAPFRAME (group leader trapframe)
 //   TRAMPOLINE (the same page as in the kernel)
 #define TRAPFRAME (TRAMPOLINE - PGSIZE)
+
+// Top of user memory. Below this, NTHREAD pages are reserved for
+// per-thread trapframes (slot 0 is at TRAPFRAME).
+#define USERTOP   (TRAPFRAME - NTHREAD * PGSIZE)

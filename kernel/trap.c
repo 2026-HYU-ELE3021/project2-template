@@ -69,7 +69,7 @@ usertrap(void)
   } else if((which_dev = devintr()) != 0){
     // ok
   } else if((r_scause() == 15 || r_scause() == 13) &&
-            vmfault(p->pagetable, r_stval(), (r_scause() == 13)? 1 : 0) != 0) {
+            vmfault(p->mm->pagetable, r_stval(), (r_scause() == 13)? 1 : 0) != 0) {
     // page fault on lazily-allocated page
   } else {
     printf("usertrap(): unexpected scause 0x%lx pid=%d\n", r_scause(), p->pid);
@@ -87,7 +87,7 @@ usertrap(void)
   prepare_return();
 
   // the user page table to switch to, for trampoline.S
-  uint64 satp = MAKE_SATP(p->pagetable);
+  uint64 satp = MAKE_SATP(p->mm->pagetable);
 
   // return to trampoline.S; satp value in a0.
   return satp;

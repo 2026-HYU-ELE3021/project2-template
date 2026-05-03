@@ -81,7 +81,16 @@ struct trapframe {
 
 enum procstate { UNUSED, USED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
 
-// Per-process state
+struct mm_struct {
+  pagetable_t pagetable;     // page table root
+  uint64 sz;                 // user memory size (bytes)
+  int refcount;              // number of tasks sharing this mm
+  struct spinlock lock;
+};
+
+#define CLONE_VM      0x0100   // share address space (thread)
+
+// Per-process (per-task) state.
 struct proc {
   struct spinlock lock;
 
@@ -90,18 +99,23 @@ struct proc {
   void *chan;                  // If non-zero, sleeping on chan
   int killed;                  // If non-zero, have been killed
   int xstate;                  // Exit status to be returned to parent's wait
-  int pid;                     // Process ID
+  int pid;                     // Process / thread id (Linux's "TID")
 
   // wait_lock must be held when using this:
   struct proc *parent;         // Parent process
 
   // these are private to the process, so p->lock need not be held.
   uint64 kstack;               // Virtual address of kernel stack
-  uint64 sz;                   // Size of process memory (bytes)
-  pagetable_t pagetable;       // User page table
+  struct mm_struct *mm;        // Shared address space (replaces pagetable+sz)
   struct trapframe *trapframe; // data page for trampoline.S
   struct context context;      // swtch() here to run process
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
+
+  // === thread group ===
+  struct proc *group_leader;   // group leader (self if not a thread)
+  int tgid;                    // thread group id (== leader->pid)
+  uint64 tf_va;                // user VA where p->trapframe is mapped
+  void *ustack;                // user stack base (only set for threads)
 };

@@ -455,7 +455,7 @@ vmfault(pagetable_t pagetable, uint64 va, int read)
   uint64 mem;
   struct proc *p = myproc();
 
-  if (va >= p->sz)
+  if (va >= p->mm->sz)
     return 0;
   va = PGROUNDDOWN(va);
   if(ismapped(pagetable, va)) {
@@ -465,7 +465,7 @@ vmfault(pagetable_t pagetable, uint64 va, int read)
   if(mem == 0)
     return 0;
   memset((void *) mem, 0, PGSIZE);
-  if (mappages(p->pagetable, va, PGSIZE, mem, PTE_W|PTE_U|PTE_R) != 0) {
+  if (mappages(p->mm->pagetable, va, PGSIZE, mem, PTE_W|PTE_U|PTE_R) != 0) {
     kfree((void *)mem);
     return 0;
   }
