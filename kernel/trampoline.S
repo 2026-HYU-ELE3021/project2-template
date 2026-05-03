@@ -27,14 +27,14 @@ uservec:
         # user page table.
         #
 
-        # save user a0 in sscratch so
-        # a0 can be used to get at TRAPFRAME.
-        csrw sscratch, a0
-
-        # each process has a separate p->trapframe memory area,
-        # but it's mapped to the same virtual address
-        # (TRAPFRAME) in every process's user page table.
-        li a0, TRAPFRAME
+        # sscratch was set by prepare_return() to the current thread's
+        # trapframe virtual address.  csrrw atomically swaps a0 with
+        # sscratch, so afterwards:
+        #   a0       = trapframe VA  (was sscratch)
+        #   sscratch = user a0       (was a0)
+        # Different threads see different tf_va here, even though they
+        # share the same page table.
+        csrrw a0, sscratch, a0
 
         # save the user registers in TRAPFRAME
         sd ra, 40(a0)
@@ -107,7 +107,11 @@ userret:
         csrw satp, a0
         sfence.vma zero, zero
 
-        li a0, TRAPFRAME
+        # Read this thread's trapframe VA from sscratch.  prepare_return()
+        # set it before we got here.  csrr leaves sscratch unchanged, so
+        # on the next user->kernel trap, uservec's csrrw still finds the
+        # right address.
+        csrr a0, sscratch
 
         # restore all but a0 from TRAPFRAME
         ld ra, 40(a0)

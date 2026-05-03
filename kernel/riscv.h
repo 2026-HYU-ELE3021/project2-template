@@ -172,6 +172,22 @@ r_stvec()
   return x;
 }
 
+// Supervisor scratch — used by the trampoline to remember the
+// current task's trapframe virtual address across user/kernel transitions.
+static inline void
+w_sscratch(uint64 x)
+{
+  asm volatile("csrw sscratch, %0" : : "r" (x));
+}
+
+static inline uint64
+r_sscratch()
+{
+  uint64 x;
+  asm volatile("csrr %0, sscratch" : "=r" (x) );
+  return x;
+}
+
 // Supervisor Timer Comparison Register
 static inline uint64
 r_stimecmp()

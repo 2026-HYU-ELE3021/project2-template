@@ -117,6 +117,12 @@ prepare_return(void)
   p->trapframe->kernel_trap = (uint64)usertrap;
   p->trapframe->kernel_hartid = r_tp();         // hartid for cpuid()
 
+  // sscratch holds this thread's trapframe VA across user/kernel
+  // transitions. uservec will use it to locate the trapframe in
+  // the shared user page table (different threads have different
+  // tf_va values; sscratch is what makes them findable).
+  w_sscratch(p->tf_va);
+
   // set up the registers that trampoline.S's sret will use
   // to get to user space.
 
