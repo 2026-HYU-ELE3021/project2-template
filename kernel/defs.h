@@ -81,7 +81,9 @@ void            printfinit(void);
 // proc.c
 int             cpuid(void);
 void            kexit(int);
-int             kfork(void);
+int             kclone(uint64 fn, uint64 arg, uint64 stack,
+                       int n_pages, int flags);
+int             kjoin(uint64 stack_addr);
 int             growproc(int);
 void            proc_mapstacks(pagetable_t);
 pagetable_t     proc_pagetable(struct proc *);

@@ -1,9 +1,14 @@
 #define SBRK_ERROR ((char *)-1)
 
+// clone() flags
+#define CLONE_VM    0x0100   // share address space → thread
+
 struct stat;
 
 // system calls
-int fork(void);
+int clone(void (*fn)(void *), void *arg, void *stack,
+          int n_pages, int flags);
+int join(void **stack);
 int exit(int) __attribute__((noreturn));
 int wait(int*);
 int pipe(int*);
@@ -26,6 +31,7 @@ int pause(int);
 int uptime(void);
 
 // ulib.c
+int fork(void);                                              // wraps clone(0,...)
 int stat(const char*, struct stat*);
 char* strcpy(char*, const char*);
 void *memmove(void*, const void*, int);

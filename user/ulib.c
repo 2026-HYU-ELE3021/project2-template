@@ -159,3 +159,8 @@ sbrklazy(int n) {
   return sys_sbrk(n, SBRK_LAZY);
 }
 
+int
+fork(void)
+{
+  return clone(0, 0, 0, 0, 0);
+}

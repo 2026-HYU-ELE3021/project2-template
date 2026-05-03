@@ -303,37 +303,39 @@ growproc(int n)
   return 0;
 }
 
-// Create a new process, copying the parent.
-// Sets up child kernel stack to return as if from fork() system call.
 int
-kfork(void)
+kclone(uint64 fn, uint64 arg, uint64 stack, int n_pages, int flags)
 {
   int i, pid;
   struct proc *np;
   struct proc *p = myproc();
 
-  // Allocate process.
-  if ((np = allocproc()) == 0) {
+  if ((np = allocproc()) == 0)
     return -1;
+
+  if (flags & CLONE_VM) {
+    // === thread path ===
+    freeproc(np);
+    release(&np->lock);
+    return -1;
+  } else {
+    // === fork path ===
+    if ((np->mm = mm_alloc()) == 0)
+      goto fail;
+    if ((np->mm->pagetable = proc_pagetable(np)) == 0)
+      goto fail;
+    if (uvmcopy(p->mm->pagetable, np->mm->pagetable, p->mm->sz) < 0)
+      goto fail;
+    np->mm->sz = p->mm->sz;
+    np->group_leader = np;
+    np->tgid         = np->pid;
+
+    // copy parent's user registers; child resumes after the syscall.
+    *(np->trapframe) = *(p->trapframe);
+    np->trapframe->a0 = 0;     // child's clone() returns 0
   }
 
-  // Build a fresh address space for the child and copy parent memory.
-  if ((np->mm = mm_alloc()) == 0)
-    goto fail;
-  if ((np->mm->pagetable = proc_pagetable(np)) == 0)
-    goto fail;
-  if (uvmcopy(p->mm->pagetable, np->mm->pagetable, p->mm->sz) < 0)
-    goto fail;
-  np->mm->sz = p->mm->sz;
-  np->group_leader = np;
-  np->tgid         = np->pid;
-
-  // copy saved user registers.
-  *(np->trapframe) = *(p->trapframe);
-  // Cause fork to return 0 in the child.
-  np->trapframe->a0 = 0;
-
-  // increment reference counts on open file descriptors.
+  // === common: files, cwd, name ===
   for (i = 0; i < NOFILE; i++)
     if (p->ofile[i])
       np->ofile[i] = filedup(p->ofile[i]);
@@ -358,6 +360,13 @@ kfork(void)
 fail:
   freeproc(np);
   release(&np->lock);
+  return -1;
+}
+
+int
+kjoin(uint64 stack_addr)
+{
+  (void)stack_addr;
   return -1;
 }
 
@@ -424,8 +433,10 @@ kexit(int status)
   panic("zombie exit");
 }
 
-// Wait for a child process to exit and return its pid.
-// Returns -1 if this proc has no children.
+// Wait for a child process (group leader) to exit and return its pid.
+// Returns -1 if this proc has no such children.
+//
+// A sibling thread is NOT a child here — for that, see kjoin().
 int
 kwait(uint64 addr)
 {

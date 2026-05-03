@@ -23,9 +23,26 @@ sys_getpid(void)
 }
 
 uint64
-sys_fork(void)
+sys_clone(void)
 {
-  return kfork();
+  uint64 fn, arg, stack;
+  int n_pages, flags;
+
+  argaddr(0, &fn);
+  argaddr(1, &arg);
+  argaddr(2, &stack);
+  argint (3, &n_pages);
+  argint (4, &flags);
+
+  return kclone(fn, arg, stack, n_pages, flags);
+}
+
+uint64
+sys_join(void)
+{
+  uint64 stack_addr;
+  argaddr(0, &stack_addr);
+  return kjoin(stack_addr);
 }
 
 uint64

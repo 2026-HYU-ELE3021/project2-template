@@ -21,7 +21,8 @@ sub entry {
     print " ret\n";
 }
 
-entry("fork");
+entry("clone");
+entry("join");
 entry("exit");
 entry("wait");
 entry("pipe");
@@ -42,3 +43,4 @@ entry("getpid");
 entry("sbrk");
 entry("pause");
 entry("uptime");
+# Note: fork() is no longer a syscall — see user/ulib.c for the wrapper.
